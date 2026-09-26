@@ -1,0 +1,37 @@
+# Version control
+.git
+.gitignore
+
+# Secrets / local env (never bake into an image layer)
+.env
+.env.*
+*.env
+
+# Python caches / build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.venv/
+venv/
+build/
+dist/
+
+# Node (none today, excluded per shared-host convention)
+node_modules/
+
+# Runtime data / backups that must not enter the build context
+data/
+backups/
+
+# Docker + docs (not needed inside the image)
+Dockerfile
+.dockerignore
+docker-compose*.yml
+README.md
+
+# OS cruft
+.DS_Store
