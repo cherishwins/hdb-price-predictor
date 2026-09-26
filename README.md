@@ -71,27 +71,55 @@ The application should now be accessible in your web browser, usually at *http:/
 
 ## 🐳 Docker Instructions
 
+The image is a small multi-stage build: Python deps go into an isolated venv in
+the builder stage, and the runtime stage is a slim, non-root image with only the
+app, its model/data files, and the OpenMP runtime xgboost needs. The base image
+is pinned by digest so rebuilds are reproducible. A `HEALTHCHECK` polls
+Streamlit's `/_stcore/health` endpoint.
+
 ### 1. Build the Docker image
 
 From the project's root directory (where the Dockerfile is located):
 
 ```bash
-docker build -t hdb-predictor-app:latest .
+docker build -t hdb-price-predictor .
 ```
 
-### 2. Run the Docker container
+### 2. Run the Docker container (shared host behind Caddy)
+
+This app is meant to sit on a single shared Docker host with a Caddy reverse
+proxy terminating TLS as the only public front door. **Streamlit ships no auth
+of its own**, so the published port is bound to loopback — Caddy proxies to it
+locally on the same host, and nothing external can reach `:8501` directly:
 
 ```bash
-docker run -p 8501:8501 hdb-predictor-app:latest
+docker run -d --name hdb --restart unless-stopped \
+  -p 127.0.0.1:8501:8501 hdb-price-predictor
 ```
 
-The app will be accessible at *http://localhost:8501* on your host machine.
+`--server.address=0.0.0.0` stays set *inside* the container (Docker port
+mapping requires it); the network restriction belongs on the host publish, not
+the app bind. Caddy then routes a hostname to it, e.g.:
+
+```caddyfile
+hdb.example.com {
+    reverse_proxy 127.0.0.1:8501
+}
+```
+
+For a purely local check (no proxy), `-p 127.0.0.1:8501:8501` still serves the
+app at *http://localhost:8501* on your own machine.
+
+> ⚠️ Do **not** publish with a bare `-p 8501:8501`: that binds `0.0.0.0` and
+> exposes the unauthenticated Streamlit port to the whole network, bypassing
+> Caddy. If loopback binding is not an option, block external `:8501` at the
+> host firewall instead.
 
 ### (Optional) Tag and Push to a Container Registry (e.g. Docker Hub)
 
 ```bash
-docker tag hdb-predictor-app:latest <dockerhub-username>/hdb-predictor-app:latest
-docker push <dockerhub-username>/hdb-predictor-app:latest
+docker tag hdb-price-predictor <dockerhub-username>/hdb-price-predictor:latest
+docker push <dockerhub-username>/hdb-price-predictor:latest
 ```
 
 ## 📈 Data
