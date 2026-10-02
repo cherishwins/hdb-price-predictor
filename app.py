@@ -26,7 +26,7 @@ if 'theme' not in st.session_state:
     st.session_state.theme = 'light'
 
 PAGE_OPTIONS_LIST = ["Make Prediction", "Transaction Map", "About"]
-DATA_INGESTION_DATE = "16-07-2025"
+DATA_INGESTION_DATE = "30-06-2025"
 
 if 'active_page' not in st.session_state:
     st.session_state.active_page = PAGE_OPTIONS_LIST[0]
@@ -219,9 +219,9 @@ SCALER_PATH = "scaler.joblib"
 POSTAL_DATA_PATH = "postal_data.json"
 MODEL_LOCAL_PATH = "model.bst"
 MODEL_TYPE = "XGBoost (Locally Loaded)"
-FEATURE_NAMES = ['floor_area_sqm', 'storey_avg', 'sale_year', 'sale_month', 'remaining_lease_years', 'flat_type_1 ROOM', 'flat_type_2 ROOM', 'flat_type_3 ROOM', 'flat_type_4 ROOM', 'flat_type_5 ROOM', 'flat_type_EXECUTIVE', 'flat_type_MULTI-GENERATION', 'flat_model_2-room', 'flat_model_3Gen','flat_model_Adjoined flat', 'flat_model_Apartment', 'flat_model_DBSS', 'flat_model_Improved', 'flat_model_Improved-Maisonette', 'flat_model_Model A', 'flat_model_Model A-Maisonette', 'flat_model_Model A2', 'flat_model_Multi Generation', 'flat_model_New Generation', 'flat_model_Premium Apartment', 'flat_model_Premium Apartment Loft', 'flat_model_Premium Maisonette', 'flat_model_Simplified', 'flat_model_Standard', 'flat_model_Terrace', 'flat_model_Type S1', 'flat_model_Type S2', 'town_ANG MO KIO', 'town_BEDOK', 'town_BISHAN', 'town_BUKIT BATOK', 'town_BUKIT MERAH', 'town_BUKIT PANJANG', 'town_BUKIT TIMAH', 'town_CENTRAL AREA', 'town_CHOA CHU KANG', 'town_CLEMENTI', 'town_GEYLANG', 'town_HOUGANG', 'town_JURONG EAST', 'town_JURONG WEST', 'town_KALLANG/WHAMPOA', 'town_MARINE PARADE', 'town_PASIR RIS', 'town_PUNGGOL', 'town_QUEENSTOWN', 'town_SEMBAWANG', 'town_SENGKANG', 'town_SERANGOON', 'town_TAMPINES', 'town_TOA PAYOH', 'town_WOODLANDS', 'town_YISHUN']
+FEATURE_NAMES = ['floor_area_sqm', 'postal', 'storey_avg', 'sale_year', 'sale_month', 'remaining_lease_years', 'flat_type_1 ROOM', 'flat_type_2 ROOM', 'flat_type_3 ROOM', 'flat_type_4 ROOM', 'flat_type_5 ROOM', 'flat_type_EXECUTIVE', 'flat_type_MULTI-GENERATION', 'flat_model_2-ROOM', 'flat_model_3GEN', 'flat_model_ADJOINED FLAT', 'flat_model_APARTMENT', 'flat_model_DBSS', 'flat_model_IMPROVED', 'flat_model_IMPROVED-MAISONETTE', 'flat_model_MAISONETTE', 'flat_model_MODEL A', 'flat_model_MODEL A-MAISONETTE', 'flat_model_MODEL A2', 'flat_model_MULTI GENERATION', 'flat_model_NEW GENERATION', 'flat_model_PREMIUM APARTMENT', 'flat_model_PREMIUM APARTMENT LOFT', 'flat_model_PREMIUM MAISONETTE', 'flat_model_SIMPLIFIED', 'flat_model_STANDARD', 'flat_model_TERRACE', 'flat_model_TYPE S1', 'flat_model_TYPE S2', 'town_ANG MO KIO', 'town_BEDOK', 'town_BISHAN', 'town_BUKIT BATOK', 'town_BUKIT MERAH', 'town_BUKIT PANJANG', 'town_BUKIT TIMAH', 'town_CENTRAL AREA', 'town_CHOA CHU KANG', 'town_CLEMENTI', 'town_GEYLANG', 'town_HOUGANG', 'town_JURONG EAST', 'town_JURONG WEST', 'town_KALLANG/WHAMPOA', 'town_MARINE PARADE', 'town_PASIR RIS', 'town_PUNGGOL', 'town_QUEENSTOWN', 'town_SEMBAWANG', 'town_SENGKANG', 'town_SERANGOON', 'town_TAMPINES', 'town_TOA PAYOH', 'town_WOODLANDS', 'town_YISHUN']
 
-if len(FEATURE_NAMES) != 58:
+if len(FEATURE_NAMES) != 60:
     st.error(f"Feature count mismatch! Expected 60 but got {len(FEATURE_NAMES)}")
 NUM_FEATURES = len(FEATURE_NAMES)
 
@@ -235,15 +235,6 @@ def load_xgboost_model_local():
         
         xgb_model = xgb.Booster()
         xgb_model.load_model(MODEL_LOCAL_PATH)
-        
-        # Optional: Debug model features
-        try:
-            num_model_features = xgb_model.num_features()
-            if num_model_features != NUM_FEATURES:
-                st.warning(f"Model feature count ({num_model_features}) does not match expected ({NUM_FEATURES}). This WILL cause errors.")
-        except Exception as e_feat:
-            st.warning(f"DEBUG: Could not get feature count from model: {e_feat}")
-
         return xgb_model
     except Exception as e:
         st.error(f"Error loading local XGBoost model ({MODEL_LOCAL_PATH}): {e}")
@@ -287,7 +278,17 @@ def load_postal_data():
 # --- Load resources ---
 scaler = load_scaler()
 postal_data = load_postal_data()
-xgb_model_loaded = load_xgboost_model_local() 
+xgb_model_loaded = load_xgboost_model_local()
+
+# model.bst takes a bare vector: a feature list it was not trained on is
+# accepted silently and every price comes out wrong. Refuse to serve instead.
+# model.bst, scaler.joblib and FEATURE_NAMES must always change together.
+if xgb_model_loaded is not None and xgb_model_loaded.num_features() != NUM_FEATURES:
+    st.error(f"Model expects {xgb_model_loaded.num_features()} features but the app builds {NUM_FEATURES}. Predictions are disabled until model.bst and FEATURE_NAMES match.")
+    st.stop()
+if list(getattr(scaler, "feature_names_in_", FEATURE_NAMES)) != FEATURE_NAMES:
+    st.error("Scaler was fitted on a different feature layout than FEATURE_NAMES. Predictions are disabled until scaler.joblib and FEATURE_NAMES match.")
+    st.stop()
 
 def validate_postal_code(postal_code):
     if not postal_code or not postal_code.isdigit() or len(postal_code) != 6:
