@@ -286,7 +286,9 @@ xgb_model_loaded = load_xgboost_model_local()
 if xgb_model_loaded is not None and xgb_model_loaded.num_features() != NUM_FEATURES:
     st.error(f"Model expects {xgb_model_loaded.num_features()} features but the app builds {NUM_FEATURES}. Predictions are disabled until model.bst and FEATURE_NAMES match.")
     st.stop()
-if list(getattr(scaler, "feature_names_in_", FEATURE_NAMES)) != FEATURE_NAMES:
+# A scaler fitted on a bare array records no names, so it cannot show it matches.
+scaler_names = getattr(scaler, "feature_names_in_", None)
+if scaler_names is None or list(scaler_names) != FEATURE_NAMES:
     st.error("Scaler was fitted on a different feature layout than FEATURE_NAMES. Predictions are disabled until scaler.joblib and FEATURE_NAMES match.")
     st.stop()
 

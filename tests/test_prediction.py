@@ -14,6 +14,9 @@ import shutil
 import tempfile
 import unittest
 
+import joblib
+import numpy as np
+import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -28,6 +31,9 @@ TOLERANCE = 0.15
 
 
 def run_app(app_dir):
+    # The loaders are st.cache_resource, which outlives one AppTest: without
+    # this a copy of the app would be served the previous run's scaler.
+    st.cache_resource.clear()
     cwd = os.getcwd()
     os.chdir(app_dir)  # app.py loads its model and data by relative path
     try:
@@ -84,13 +90,25 @@ class KnownTransactionTest(unittest.TestCase):
 
 
 class LayoutMismatchTest(unittest.TestCase):
+    def app_copy(self, keep):
+        # A temp copy of the app that links the files named in `keep` and
+        # leaves the rest for the test to write.
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp)
+        for name in keep:
+            os.symlink(os.path.join(REPO, name), os.path.join(tmp, name))
+        return tmp
+
+    def assert_refuses(self, app_dir, message):
+        _, at = run_app(app_dir)
+        errors = [e.value for e in at.error]
+        self.assertTrue(any(message in e for e in errors), errors)
+        self.assertEqual(len(at.button), 0, "app kept serving after a layout mismatch")
+
     def test_feature_layout_mismatch_is_fatal(self):
         # The same app with one feature dropped from FEATURE_NAMES: the
         # model still expects 60, so the app must refuse to serve.
-        tmp = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, tmp)
-        for name in DATA_FILES:
-            os.symlink(os.path.join(REPO, name), os.path.join(tmp, name))
+        tmp = self.app_copy(DATA_FILES)
         with open(os.path.join(REPO, "app.py")) as f:
             src = f.read()
         layout = "FEATURE_NAMES = ['floor_area_sqm', 'postal', "
@@ -98,11 +116,26 @@ class LayoutMismatchTest(unittest.TestCase):
         src = src.replace(layout, "FEATURE_NAMES = ['floor_area_sqm', ", 1)
         with open(os.path.join(tmp, "app.py"), "w") as f:
             f.write(src)
+        self.assert_refuses(tmp, "Model expects 60 features but the app builds 59")
 
-        _, at = run_app(tmp)
-        errors = [e.value for e in at.error]
-        self.assertTrue(any("Model expects 60 features but the app builds 59" in e for e in errors), errors)
-        self.assertEqual(len(at.button), 0, "app kept serving after a layout mismatch")
+    def test_scaler_layout_mismatch_is_fatal(self):
+        # Right width, wrong order: 'postal' and 'storey_avg' swapped.
+        tmp = self.app_copy(["app.py", "model.bst", "postal_data.json"])
+        scaler = joblib.load(os.path.join(REPO, "scaler.joblib"))
+        names = list(scaler.feature_names_in_)
+        names[1], names[2] = names[2], names[1]
+        scaler.feature_names_in_ = np.array(names, dtype=object)
+        joblib.dump(scaler, os.path.join(tmp, "scaler.joblib"))
+        self.assert_refuses(tmp, "Scaler was fitted on a different feature layout")
+
+    def test_scaler_without_feature_names_is_fatal(self):
+        # A scaler fitted on a bare array records no names, so nothing
+        # shows it matches FEATURE_NAMES.
+        tmp = self.app_copy(["app.py", "model.bst", "postal_data.json"])
+        scaler = joblib.load(os.path.join(REPO, "scaler.joblib"))
+        del scaler.feature_names_in_
+        joblib.dump(scaler, os.path.join(tmp, "scaler.joblib"))
+        self.assert_refuses(tmp, "Scaler was fitted on a different feature layout")
 
 
 if __name__ == "__main__":
