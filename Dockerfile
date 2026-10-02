@@ -25,7 +25,9 @@ RUN pip install -r requirements.txt \
     # xgboost's wheel pulls nvidia-nccl-cu12 (CUDA multi-GPU collectives, ~300MB).
     # This app runs CPU inference only, so drop the unused CUDA payload to keep
     # the runtime image small. Remove this line if you ever deploy on GPU.
-    && pip uninstall -y nvidia-nccl-cu12 || true
+    # The || true is scoped to the uninstall alone, so a failed install still
+    # fails the build instead of shipping an empty venv.
+    && (pip uninstall -y nvidia-nccl-cu12 || true)
 
 # ---- Runtime: slim image, non-root, only what the app needs ---------------
 FROM ${PYTHON_BASE} AS runtime
@@ -47,15 +49,17 @@ COPY --from=builder /opt/venv /opt/venv
 
 WORKDIR /app
 
-# Application code and the model/data files it loads by relative path.
-COPY app.py ./
-COPY scaler.joblib ./
-COPY model.bst ./
-COPY postal_data.json ./
-
 # Run as an unprivileged user with a writable home for Streamlit's config.
-RUN useradd --create-home --uid 10001 appuser \
-    && chown -R appuser:appuser /app
+RUN useradd --create-home --uid 10001 appuser
+
+# Application code and the model/data files it loads by relative path.
+# --chown sets ownership in the same layer; a later chown -R would copy the
+# 67MB model into a second layer.
+COPY --chown=appuser:appuser app.py ./
+COPY --chown=appuser:appuser scaler.joblib ./
+COPY --chown=appuser:appuser model.bst ./
+COPY --chown=appuser:appuser postal_data.json ./
+
 USER appuser
 
 EXPOSE 8501
